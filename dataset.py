@@ -1,60 +1,54 @@
-import os, torch, nltk
-from torch.utils.data import Dataset
 from PIL import Image
-from torchvision import transforms
-from collections import Counter
-from nltk.tokenize import word_tokenize
-
-nltk.download('punkt_tab')
-
-class Vocab:
-    def __init__(self, questions, min_freq=2):
-        counter = Counter()
-        for q in questions:
-            tokens = word_tokenize(q.lower())
-            counter.update(tokens)
-
-        self.token2idx = {"<PAD>": 0, "<UNK>": 1}
-
-        for word, freq in counter.items():
-            if freq >= min_freq:
-                self.token2idx[word] = len(self.token2idx)
-
-        self.idx2token = {v: k for k, v in self.token2idx.items()}
-    
-    def encode(self, sentence):
-        tokens = word_tokenize(sentence.lower())
-        return [self.token2idx.get(tok, 1) for tok in tokens]
-    
-    def __len__(self):
-        return len(self.token2idx)
-
+from torch.utils.data import Dataset, DataLoader
+import torchvision.transforms as transforms
+import pandas as pd
+import torch, json, os
 
 class SLAKEDataset(Dataset):
-    def __init__(self, df, img_dir, vocab, answer2idx, max_len=30, transform=None):
-        self.df = df.reset_index(drop=True)
-        self.img_dir = img_dir
-        self.vocab = vocab
-        self.answer2idx = answer2idx
-        self.max_len = max_len
-        self.transform = transform if transform else transforms.ToTensor()
+    def __init__(self, df, img_dir, tokenizer, ans_to_idx, max_seq_len=50, transform=None):
+        self.data = df
+        self.img_dir = os.path.join(img_dir, 'imgs')
+        self.tokenizer = tokenizer
+        self.ans_to_idx = ans_to_idx
+        self.max_seq_len = max_seq_len
+        
+        if transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                   std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            self.transform = transform
     
     def __len__(self):
-        return len(self.df)
+        return len(self.data)
     
     def __getitem__(self, idx):
-        entry = self.df.iloc[idx]
-        img_path = os.path.join(self.img_dir, entry['img_name'])
+        item = self.data.iloc[idx]
+        
+        # Load image
+        img_path = f"{self.img_dir}/{item['img_name']}"
         image = Image.open(img_path).convert('RGB')
-        if self.transform:
-            image = self.transform(image)
+        image = self.transform(image)
         
-        question = self.vocab.encode(entry['question'])
-        if len(question) < self.max_len:
-            question += [0] * (self.max_len - len(question))
-        else:
-            question = question[:self.max_len]
-        question = torch.tensor(question, dtype=torch.long)
+        # Tokenize question
+        question = item['question']
+        tokens = self.tokenizer.encode(
+            question,
+            max_length=self.max_seq_len,
+            padding='max_length',
+            truncation=True,
+            return_tensors='pt'
+        ).squeeze(0)
         
-        answer = torch.tensor(self.answer2idx[entry['answer']], dtype=torch.long)
-        return image, question, answer
+        # Get answer index
+        answer = item['answer']
+        answer_idx = self.ans_to_idx.get(answer, 0)  # 0 for unknown
+        
+        return {
+            'image': image,
+            'question': tokens,
+            'answer': torch.tensor(answer_idx, dtype=torch.long)
+        }

@@ -1,4 +1,4 @@
-# Bridging Vision and Language for Clinical Insight: A Med-VQA Model Comparison with SLAK
+# Bridging Vision and Language for Clinical Insight: A Med-VQA Model Comparison
 
 ## Installation
 
